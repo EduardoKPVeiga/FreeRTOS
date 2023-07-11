@@ -7,137 +7,71 @@
 #include <Arduino.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
+#include "freertos/timers.h"
 
-#define LED 19
+#define LED1 19
+#define LED2 16
 #define BTN 12
 
 /* Handles */
-QueueHandle_t xFila;
-
-TaskHandle_t task1Handle = NULL;
-TaskHandle_t task2Handle = NULL;
-TaskHandle_t task3Handle = NULL;
-
-static bool btnState = false;
+TaskHandle_t xTask1 = NULL;
+TaskHandle_t xTimer1, xTimer2;
 
 /* Protótipo das tasks */
 void vTask1(void *pvParameters);
-void vTask2(void *pvParameters);
-void vTask3(void *pvParameters);
-void trataISR_BT()
-{
-  btnState = !btnState;
-  if (btnState)
-  {
-    vTaskSuspend(task1Handle);
-  }
-  else
-  {
-    vTaskResume(task1Handle);
-  }
-}
+
+void callBackTimer1(TimerHandle_t xTimer);
+void callBackTimer2(TimerHandle_t xTimer);
 
 void setup()
 {
-  BaseType_t xReturned;
-
-  Serial.begin(115200);
-  pinMode(LED, OUTPUT);
+  Serial.begin(9600);
+  pinMode(LED1, OUTPUT);
+  pinMode(LED2, OUTPUT);
   pinMode(BTN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(BTN), trataISR_BT, FALLING);
-
-  xFila = xQueueCreate(5, sizeof(int));
-  if (xFila == NULL)
-  {
-    Serial.println("Não foi possível criar uma fila");
-  }
-
-  xReturned = xTaskCreate(vTask1, "TASK1", configMINIMAL_STACK_SIZE, NULL, 1, &task1Handle);
-  if (xReturned == pdFAIL)
-  {
-    Serial.println("Não foi possível criar a task 1");
-    while (1)
-      ;
-  }
-
-  xReturned = xTaskCreate(vTask2, "TASK2", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &task2Handle);
-  if (xReturned == pdFAIL)
-  {
-    Serial.println("Não foi possível criar a task 2");
-    while (1)
-      ;
-  }
-
-  xReturned = xTaskCreate(vTask3, "TASK3", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &task3Handle);
-  if (xReturned == pdFAIL)
-  {
-    Serial.println("Não foi possível criar a task 3");
-    while (1)
-      ;
-  }
+  xTimer1 = xTimerCreate("TIMER1", pdMS_TO_TICKS(1000), pdTRUE, 0, callBackTimer1);
+  xTimer2 = xTimerCreate("TIMER2", pdMS_TO_TICKS(10000), pdFALSE, 0, callBackTimer2);
+  xTaskCreate(vTask1, "TASK1", configMINIMAL_STACK_SIZE + 1024, NULL, 1, &xTask1);
+  xTimerStart(xTimer1, 0);
 }
 
 void loop()
 {
-  vTaskDelay(3000);
+  vTaskDelay(pdMS_TO_TICKS(1000));
 }
 
-void vTask1(void *pvParameters)
+void vTask1(void *pvParameter)
 {
-  // UBaseType_t uxHighWaterMark;
+  uint8_t debouncingTime = 0;
   while (1)
   {
-    digitalWrite(LED, !digitalRead(LED));
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    // uxHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-    // Serial.print(pcTaskGetName(NULL));
-    // Serial.print(": ");
-    // Serial.println(uxHighWaterMark);
-  }
-}
-
-void vTask2(void *pvParameters)
-{
-  int cont = 0;
-  while (1)
-  {
-    Serial.print("Cont: ");
-    Serial.println(cont);
-
-    if (cont <= 10)
+    if ((digitalRead(BTN) == LOW) && xTimerIsTimerActive(xTimer2) == pdFALSE)
     {
-      xQueueSendToBack(xFila, &cont, portMAX_DELAY);
-      cont++;
-    }
-    else
-    {
-      cont = 0;
-      vTaskDelay(pdMS_TO_TICKS(500));
-    }
-    vTaskDelay(pdMS_TO_TICKS(500));
-  }
-}
-
-void vTask3(void *pvParameters)
-{
-  int valorRecebido = 0;
-  while (1)
-  {
-    if (xQueueReceive(xFila, &valorRecebido, pdMS_TO_TICKS(1000)) == pdTRUE)
-    {
-      if (valorRecebido >= 10)
+      debouncingTime++;
+      if (debouncingTime >= 10)
       {
-        if (task2Handle != NULL)
-        {
-          Serial.println("Suspendendo Tasks");
-          vTaskSuspend(task2Handle);
-          vTaskDelay(pdMS_TO_TICKS(5000));
-          Serial.println("Reiniciando Tasks");
-          vTaskResume(task2Handle);
-        }
+        debouncingTime = 0;
+        digitalWrite(LED2, HIGH);
+        xTimerStart(xTimer2, 0);
+        xTimerStop(xTimer1, 0);
+        Serial.println("Timer 2 start.");
       }
     }
+    else
+      debouncingTime = 0;
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
+}
+
+void callBackTimer1(TimerHandle_t xTimer)
+{
+  Serial.println("callBT1");
+  digitalWrite(LED1, !digitalRead(LED1));
+}
+
+void callBackTimer2(TimerHandle_t xTimer)
+{
+  Serial.println("callBT2");
+  digitalWrite(LED2, LOW);
+  xTimerStart(xTimer1, 0);
 }
